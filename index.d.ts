@@ -12,8 +12,8 @@ export default function getVideoInfo(
 
 export interface VideoInfo {
     url: string;
-    sd: string;
-    hd: string;
-    title: string;
+    videoId: string;
+    videoStream: string;
+    audioStream: string;
     thumbnail: string;
 }

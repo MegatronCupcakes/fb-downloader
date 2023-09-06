@@ -7,6 +7,7 @@
 */
 const getFBInfo = (videoUrl, cookie, useragent) => {
   const axios = require("axios");
+  const _ = require("underscore");
 
   const headers = {
     "sec-fetch-user": "?1",
@@ -38,21 +39,42 @@ const getFBInfo = (videoUrl, cookie, useragent) => {
 
     axios.get(videoUrl, { headers }).then(({ data }) => {
       data = data.replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+      
+      let pageStringArray = data.split('<script');
+      pageStringArray = _.filter(pageStringArray, string => string.includes('type="application/json"'));
+      pageStringArray = _.filter(pageStringArray, string => string.includes('RelayPrefetchedStreamCache'));
+      pageStringArray = _.filter(pageStringArray, string => string.includes('all_video_dash_prefetch_representations'));
+      pageStringArray = _.compact(pageStringArray.map(string => string.split('data-sjs>')[1]));
+      pageStringArray = _.compact(pageStringArray.map(string => string.split('</script>')[0]));
+      let pageObjectArray = pageStringArray.map(string => JSON.parse(string).require[0][3]);
+      pageObjectArray = _.flatten(_.compact(pageObjectArray.map(subArray => {
+          return _.filter(subArray, subObject => {
+              const subKeys = _.keys(subObject);
+              return _.some(subKeys, subKey => subObject[subKey]);
+          });
+      })));
+      pageObjectArray = pageObjectArray.map(pageObject => {
+          return _.find(pageObject.__bbox.require, subArray => subArray[0] == 'RelayPrefetchedStreamCache');
+          
+      });
+      pageObjectArray = pageObjectArray.map(pageObjectArray => pageObjectArray[3][1].__bbox.result);
 
-      const sdMatch = data.match(/"browser_native_sd_url":"(.*?)"/) || data.match(/"playable_url":"(.*?)"/) || data.match(/sd_src\s*:\s*"([^"]*)"/) || data.match(/(?<="src":")[^"]*(https:\/\/[^"]*)/);
-      const hdMatch = data.match(/"browser_native_hd_url":"(.*?)"/) || data.match(/"playable_url_quality_hd":"(.*?)"/) || data.match(/hd_src\s*:\s*"([^"]*)"/);
-      const titleMatch = data.match(/<meta\sname="description"\scontent="(.*?)"/);
-      const thumbMatch = data.match(/"preferred_thumbnail":{"image":{"uri":"(.*?)"/);
-			
-			// @TODO: Extract audio URL
+      const formats = pageObjectArray[0].extensions.all_video_dash_prefetch_representations[0].representations;
+      const videoFormats = _.sortBy(_.filter(formats, format => format.mime_type == 'video/mp4'), format => format.width).reverse();
+      const audioFormats = _.sortBy(_.filter(formats, format => format.mime_type == 'audio/mp4'), format => format.bandwidth).reverse();
 
-      if (sdMatch && sdMatch[1]) {
+      const videoId = pageObjectArray[0].data.video.id;
+      const thumbnail = pageObjectArray[0].data.video.story.attachments[0].media.preferred_thumbnail.image.uri;
+      const bestVideo = _.isEmpty(videoFormats) ? null : videoFormats[0].base_url;
+      const bestAudio = _.isEmpty(audioFormats) ? null : audioFormats[0].base_url;
+
+      if (bestVideo && bestAudio) {
         const result = {
           url: videoUrl,
-          sd: parseString(sdMatch[1]),
-          hd: hdMatch && hdMatch[1] ? parseString(hdMatch[1]) : "",
-          title: titleMatch && titleMatch[1] ? parseString(titleMatch[1]) : data.match(/<title>(.*?)<\/title>/)?.[1] ?? "",
-          thumbnail: thumbMatch && thumbMatch[1] ? parseString(thumbMatch[1]) : "",
+          videoId: videoId,
+          videoStream: bestVideo,
+          audioStream: bestAudio,
+          thumbnail: thumbnail
         };
 
         resolve(result);
